@@ -54,18 +54,26 @@ class StateHistoryEncoder(nn.Module):
 
         if tsteps == 50:
             self.conv_layers = nn.Sequential(
-                    nn.Conv1d(in_channels = 3 * channel_size, out_channels = 2 * channel_size, kernel_size = 8, stride = 4), self.activation_fn,
-                    nn.Conv1d(in_channels = 2 * channel_size, out_channels = channel_size, kernel_size = 5, stride = 1), self.activation_fn,
-                    nn.Conv1d(in_channels = channel_size, out_channels = channel_size, kernel_size = 5, stride = 1), self.activation_fn, nn.Flatten())
+                nn.Conv1d(in_channels = 3 * channel_size, out_channels = 2 * channel_size, kernel_size = 8, stride = 4),
+                self.activation_fn,
+                nn.Conv1d(in_channels = 2 * channel_size, out_channels = channel_size, kernel_size = 5, stride = 1),
+                self.activation_fn,
+                nn.Conv1d(in_channels = channel_size, out_channels = channel_size, kernel_size = 5, stride = 1),
+                self.activation_fn,
+                nn.Flatten())
         elif tsteps == 10:
             self.conv_layers = nn.Sequential(
-                nn.Conv1d(in_channels = 3 * channel_size, out_channels = 2 * channel_size, kernel_size = 4, stride = 2), self.activation_fn,
-                nn.Conv1d(in_channels = 2 * channel_size, out_channels = channel_size, kernel_size = 2, stride = 1), self.activation_fn,
+                nn.Conv1d(in_channels = 3 * channel_size, out_channels = 2 * channel_size, kernel_size = 4, stride = 2),
+                self.activation_fn,
+                nn.Conv1d(in_channels = 2 * channel_size, out_channels = channel_size, kernel_size = 2, stride = 1),
+                self.activation_fn,
                 nn.Flatten())
         elif tsteps == 20:
             self.conv_layers = nn.Sequential(
-                nn.Conv1d(in_channels = 3 * channel_size, out_channels = 2 * channel_size, kernel_size = 6, stride = 2), self.activation_fn,
-                nn.Conv1d(in_channels = 2 * channel_size, out_channels = channel_size, kernel_size = 4, stride = 2), self.activation_fn,
+                nn.Conv1d(in_channels = 3 * channel_size, out_channels = 2 * channel_size, kernel_size = 6, stride = 2),
+                self.activation_fn,
+                nn.Conv1d(in_channels = 2 * channel_size, out_channels = channel_size, kernel_size = 4, stride = 2),
+                self.activation_fn,
                 nn.Flatten())
         else:
             raise(ValueError("tsteps must be 10, 20 or 50"))
@@ -143,7 +151,7 @@ class Actor(nn.Module):
         actor_layers.append(nn.Linear(num_prop+
                                       self.scan_encoder_output_dim+
                                       num_priv_explicit+
-                                      priv_encoder_output_dim, 
+                                      priv_encoder_output_dim,  # input of the actor (the 4 things) 
                                       actor_hidden_dims[0]))
         actor_layers.append(activation)
         for l in range(len(actor_hidden_dims)):
@@ -157,42 +165,23 @@ class Actor(nn.Module):
         self.actor_backbone = nn.Sequential(*actor_layers)
 
     def forward(self, obs, hist_encoding: bool, eval=False, scandots_latent=None):
-        if not eval:
-            if self.if_scan_encode:
-                obs_scan = obs[:, self.num_prop:self.num_prop + self.num_scan]
-                if scandots_latent is None:
-                    scan_latent = self.scan_encoder(obs_scan)   
-                else:
-                    scan_latent = scandots_latent
-                obs_prop_scan = torch.cat([obs[:, :self.num_prop], scan_latent], dim=1)
+        if self.if_scan_encode:
+            obs_scan = obs[:, self.num_prop:self.num_prop + self.num_scan]
+            if scandots_latent is None:
+                scan_latent = self.scan_encoder(obs_scan)   
             else:
-                obs_prop_scan = obs[:, :self.num_prop + self.num_scan]
-            obs_priv_explicit = obs[:, self.num_prop + self.num_scan:self.num_prop + self.num_scan + self.num_priv_explicit]
-            if hist_encoding:
-                latent = self.infer_hist_latent(obs)
-            else:
-                latent = self.infer_priv_latent(obs)
-            backbone_input = torch.cat([obs_prop_scan, obs_priv_explicit, latent], dim=1)
-            backbone_output = self.actor_backbone(backbone_input)
-            return backbone_output
+                scan_latent = scandots_latent
+            obs_prop_scan = torch.cat([obs[:, :self.num_prop], scan_latent], dim=1)
         else:
-            if self.if_scan_encode:
-                obs_scan = obs[:, self.num_prop:self.num_prop + self.num_scan]
-                if scandots_latent is None:
-                    scan_latent = self.scan_encoder(obs_scan)   
-                else:
-                    scan_latent = scandots_latent
-                obs_prop_scan = torch.cat([obs[:, :self.num_prop], scan_latent], dim=1)
-            else:
-                obs_prop_scan = obs[:, :self.num_prop + self.num_scan]
-            obs_priv_explicit = obs[:, self.num_prop + self.num_scan:self.num_prop + self.num_scan + self.num_priv_explicit]
-            if hist_encoding:
-                latent = self.infer_hist_latent(obs)
-            else:
-                latent = self.infer_priv_latent(obs)
-            backbone_input = torch.cat([obs_prop_scan, obs_priv_explicit, latent], dim=1)
-            backbone_output = self.actor_backbone(backbone_input)
-            return backbone_output
+            obs_prop_scan = obs[:, :self.num_prop + self.num_scan]
+        obs_priv_explicit = obs[:, self.num_prop + self.num_scan:self.num_prop + self.num_scan + self.num_priv_explicit]
+        if hist_encoding:
+            latent = self.infer_hist_latent(obs)
+        else:
+            latent = self.infer_priv_latent(obs)
+        backbone_input = torch.cat([obs_prop_scan, obs_priv_explicit, latent], dim=1)
+        backbone_output = self.actor_backbone(backbone_input)
+        return backbone_output
     
     def infer_priv_latent(self, obs):
         priv = obs[:, self.num_prop + self.num_scan + self.num_priv_explicit: self.num_prop + self.num_scan + self.num_priv_explicit + self.num_priv_latent]
@@ -202,14 +191,14 @@ class Actor(nn.Module):
         hist = obs[:, -self.num_hist*self.num_prop:]
         return self.history_encoder(hist.view(-1, self.num_hist, self.num_prop))
     
-    def infer_scandots_latent(self, obs):
-        scan = obs[:, self.num_prop:self.num_prop + self.num_scan]
+    def infer_scandots_latent(self, obs):   # TO CHANGE FOR SCAN
+        scan = obs[:, self.num_prop:self.num_prop + self.num_scan]  # TO COMMENT OUT
         return self.scan_encoder(scan)
 
 class ActorCriticRMA(nn.Module):
     is_recurrent = False
-    def __init__(self,  num_prop,
-                        num_scan,
+    def __init__(self,  num_prop,   # number proprioception inputs
+                        num_scan,   # number of scandots
                         num_critic_obs,
                         num_priv_latent, 
                         num_priv_explicit,
@@ -280,7 +269,7 @@ class ActorCriticRMA(nn.Module):
 
     def update_distribution(self, observations, hist_encoding):
         mean = self.actor(observations, hist_encoding)
-        self.distribution = Normal(mean, mean*0. + self.std)
+        self.distribution = Normal(mean, mean*0. + self.std)    # I don't like that self.std is just a parameter and not the output of a NN
 
     def act(self, observations, hist_encoding=False, **kwargs):
         self.update_distribution(observations, hist_encoding)

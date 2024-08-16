@@ -32,7 +32,7 @@ from legged_gym.envs.base.legged_robot_config import LeggedRobotCfg, LeggedRobot
 
 class AnymalCRoughCfg( LeggedRobotCfg ):
     class env( LeggedRobotCfg.env ):
-        num_envs = 4096
+        num_envs = 1024    # NEW : THIS HAS TO BE 1024 ON GPU
         num_actions = 12
 
     class terrain( LeggedRobotCfg.terrain ):

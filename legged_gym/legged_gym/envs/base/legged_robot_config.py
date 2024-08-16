@@ -51,7 +51,7 @@ class LeggedRobotCfg(BaseConfig):
         num_actions = 12
         env_spacing = 3.  # not used with heightfields/trimeshes 
         send_timeouts = True # send time out information to the algorithm
-        episode_length_s = 20 # episode length in seconds
+        episode_length_s = 20 # episode length in seconds # NEW:25 default=20, might slow down the simulation sampling by 25%
         obs_type = "og"
 
 
@@ -88,16 +88,17 @@ class LeggedRobotCfg(BaseConfig):
 
     class depth:
         use_camera = False
-        camera_num_envs = 192
-        camera_terrain_num_rows = 10
-        camera_terrain_num_cols = 20
+        camera_num_envs = 640    # need to be 1024
+        chunk_size = 32     # RNN can't train on camera_num_envs envs in parallel. chunk_size is the number of envs the RNN will be trained on so memory doesn't explode.
+        camera_terrain_num_rows = 20
+        camera_terrain_num_cols = 15
 
-        position = [0.27, 0, 0.03]  # front camera
-        angle = [-5, 5]  # positive pitch down
+        position = [0.47, 0, 0.03]  # front camera # default: [0.27, 0, 0.03]
+        angle = [-5, 5]  # positive pitch down # default: [-5, 5]
 
-        update_interval = 5  # 5 works without retraining, 8 worse
+        update_interval = 5  # 5 works without retraining, 8 worse. IMPORTANT: update_interval == runner.num_steps_per_env
 
-        original = (106, 60)
+        original = (106, 60)    # default: (106, 60)
         resized = (87, 58)
         horizontal_fov = 87
         buffer_len = 2
@@ -164,11 +165,11 @@ class LeggedRobotCfg(BaseConfig):
 
         selected = False # select a unique terrain type and pass all arguments
         terrain_kwargs = None # Dict of arguments for selected terrain
-        max_init_terrain_level = 5 # starting curriculum state
-        terrain_length = 18.
+        max_init_terrain_level = 3 # starting curriculum state
+        terrain_length = 18.    # NEW : 18 FOR FULL
         terrain_width = 4
-        num_rows= 10 # number of terrain rows (levels)  # spreaded is benifitiall !
-        num_cols = 40 # number of terrain cols (types)
+        num_rows= 20 # number of terrain rows (levels)  # spreaded is benifitial !
+        num_cols = 15 # number of terrain cols (types)
         
         terrain_dict = {"smooth slope": 0., 
                         "rough slope up": 0.0,
@@ -184,19 +185,22 @@ class LeggedRobotCfg(BaseConfig):
                         "platform": 0.,
                         "large stairs up": 0.,
                         "large stairs down": 0.,
-                        "parkour": 0.2,
-                        "parkour_hurdle": 0.2,
-                        "parkour_flat": 0.2,
-                        "parkour_step": 0.2,
-                        "parkour_gap": 0.2,
-                        "demo": 0.0,}
+                        "parkour": 1.0,
+                        "parkour_hurdle": 1.0,
+                        "parkour_flat": 1.0,
+                        "parkour_step_up": 1.0,
+                        "parkour_gap": 1.0, 
+                        "demo": 0.0,
+                        "parkour_step_down": 1.0,
+                        "parkour_single_box": 0.0}
         terrain_proportions = list(terrain_dict.values())
         
         # trimesh only:
         slope_treshold = 1.5# slopes above this threshold will be corrected to vertical surfaces
         origin_zero_z = True
 
-        num_goals = 8
+        num_goals = 8   # NEW : 8 WHEN FULL ENV I.E. NOT SINGLE BOX
+        evaluate = False
 
     class commands:
         curriculum = False
@@ -216,7 +220,7 @@ class LeggedRobotCfg(BaseConfig):
 
         # Easy ranges
         class max_ranges:
-            lin_vel_x = [0.3, 0.8] # min max [m/s]
+            lin_vel_x = [0.4, 0.8] # min max [m/s]  NEW: default: [0.3,0.8], thought 0.3 was too easy because of the starting platform
             lin_vel_y = [-0.3, 0.3]#[0.15, 0.6]   # min max [m/s]
             ang_vel_yaw = [-0, 0]    # min max [rad/s]
             heading = [-1.6, 1.6]
@@ -251,6 +255,7 @@ class LeggedRobotCfg(BaseConfig):
     class asset:
         file = ""
         foot_name = "None" # name of the feet bodies, used to index body state and contact force tensors
+        knee_name = "None"
         penalize_contacts_on = []
         terminate_after_contacts_on = []
         disable_gravity = False
@@ -299,8 +304,9 @@ class LeggedRobotCfg(BaseConfig):
             lin_vel_z = -1.0
             ang_vel_xy = -0.05
             orientation = -1.
+            dof_vel = -0.01   # NEW: is activate after 8.5
             dof_acc = -2.5e-7
-            collision = -10.
+            collision = -10.    # NEW : default = -10. -> now equal to the feet_edge penalty s.t. the robot is indifferent between putting its feet on the edge for high steps. However, because of the vertical collision penalty, I assume the robot will prefer to put its feet on the edge.
             action_rate = -0.1
             delta_torques = -1.0e-7
             torques = -0.00001
@@ -308,11 +314,16 @@ class LeggedRobotCfg(BaseConfig):
             dof_error = -0.04
             feet_stumble = -1
             feet_edge = -1
+            trotting = 0.001
+            #gallup = -0.001
+            #walk = -0.001
+            feet_in_air = -10.
+            #termination = -10.
             
         only_positive_rewards = True # if true negative total rewards are clipped at zero (avoids early termination problems)
         tracking_sigma = 0.2 # tracking reward = exp(-error^2/sigma)
         soft_dof_pos_limit = 1. # percentage of urdf limits, values above this limit are penalized
-        soft_dof_vel_limit = 1
+        soft_dof_vel_limit = 0.425  # velocity on hardware: 8.5. on urdf: 20.0. 8.5 / 20.0 = 0.425
         soft_torque_limit = 0.4
         base_height_target = 1.
         max_contact_force = 40. # forces above this value are penalized
@@ -347,12 +358,12 @@ class LeggedRobotCfg(BaseConfig):
             contact_collection = 2 # 0: never, 1: last sub-step, 2: all sub-steps (default=2)
 
 class LeggedRobotCfgPPO(BaseConfig):
-    seed = 1
+    seed = 3
     runner_class_name = 'OnPolicyRunner'
  
     class policy:
         init_noise_std = 1.0
-        continue_from_last_std = True
+        continue_from_last_std = False  # default is True, changed it to false because of pretraining
         scan_encoder_dims = [128, 64, 32]
         actor_hidden_dims = [512, 256, 128]
         critic_hidden_dims = [512, 256, 128]
@@ -360,7 +371,7 @@ class LeggedRobotCfgPPO(BaseConfig):
         activation = 'elu' # can be elu, relu, selu, crelu, lrelu, tanh, sigmoid
         # only for 'ActorCriticRecurrent':
         rnn_type = 'lstm'
-        rnn_hidden_size = 512
+        rnn_hidden_size = 128
         rnn_num_layers = 1
 
         tanh_encoder_output = False
@@ -381,6 +392,7 @@ class LeggedRobotCfgPPO(BaseConfig):
         max_grad_norm = 1.
         # dagger params
         dagger_update_freq = 20
+        yaw_estimates_update_freq = 5
         priv_reg_coef_schedual = [0, 0.1, 2000, 3000]
         priv_reg_coef_schedual_resume = [0, 0.1, 0, 1]
     
@@ -390,7 +402,7 @@ class LeggedRobotCfgPPO(BaseConfig):
         buffer_len = LeggedRobotCfg.depth.buffer_len
         hidden_dims = 512
         learning_rate = 1.e-3
-        num_steps_per_env = LeggedRobotCfg.depth.update_interval * 24
+        num_steps_per_env = LeggedRobotCfg.depth.update_interval  # default: LeggedRobotCfg.depth.update_interval * 24
 
     class estimator:
         train_with_estimated_states = True
@@ -403,12 +415,12 @@ class LeggedRobotCfgPPO(BaseConfig):
     class runner:
         policy_class_name = 'ActorCritic'
         algorithm_class_name = 'PPO'
-        num_steps_per_env = 24 # per iteration
-        max_iterations = 50000 # number of policy updates
+        num_steps_per_env = 5 # per iteration   default: 24
+        max_iterations = 10001 # number of policy updates
 
         # logging
-        save_interval = 100 # check for potential saves every this many iterations
-        experiment_name = 'rough_a1'
+        save_interval = 1000 # check for potential saves every this many iterations
+        experiment_name = 'anymal_d'
         run_name = ''
         # load and resume
         resume = False

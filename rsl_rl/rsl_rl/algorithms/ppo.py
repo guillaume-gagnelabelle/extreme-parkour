@@ -64,7 +64,7 @@ class PPO:
                  estimator_paras,
                  depth_encoder,
                  depth_encoder_paras,
-                 depth_actor,
+                 #depth_actor,  # Student: not needed anymore
                  num_learning_epochs=1,
                  num_mini_batches=1,
                  clip_param=0.2,
@@ -127,8 +127,8 @@ class PPO:
             self.depth_encoder = depth_encoder
             self.depth_encoder_optimizer = optim.Adam(self.depth_encoder.parameters(), lr=depth_encoder_paras["learning_rate"])
             self.depth_encoder_paras = depth_encoder_paras
-            self.depth_actor = depth_actor
-            self.depth_actor_optimizer = optim.Adam([*self.depth_actor.parameters(), *self.depth_encoder.parameters()], lr=depth_encoder_paras["learning_rate"])
+            #self.depth_actor = depth_actor
+            #self.depth_actor_optimizer = optim.Adam([*self.depth_actor.parameters(), *self.depth_encoder.parameters()], lr=depth_encoder_paras["learning_rate"])
 
     def init_storage(self, num_envs, num_transitions_per_env, actor_obs_shape, critic_obs_shape, action_shape):
         self.storage = RolloutStorage(num_envs, num_transitions_per_env, actor_obs_shape,  critic_obs_shape, action_shape, self.device)
@@ -145,7 +145,7 @@ class PPO:
         # Compute the actions and values, use proprio to compute estimated priv_states then actions, but store true priv_states
         if self.train_with_estimated_states:
             obs_est = obs.clone()
-            priv_states_estimated = self.estimator(obs_est[:, :self.num_prop])
+            priv_states_estimated = self.estimator(obs_est[:, :self.num_prop])  # input shape = (num_env, 53), output shape = (num_env, 9)
             obs_est[:, self.num_prop+self.num_scan:self.num_prop+self.num_scan+self.priv_states_dim] = priv_states_estimated
             self.transition.actions = self.actor_critic.act(obs_est, hist_encoding).detach()
         else:
@@ -195,7 +195,7 @@ class PPO:
         for obs_batch, critic_obs_batch, actions_batch, target_values_batch, advantages_batch, returns_batch, old_actions_log_prob_batch, \
             old_mu_batch, old_sigma_batch, hid_states_batch, masks_batch in generator:
 
-                self.actor_critic.act(obs_batch, masks=masks_batch, hidden_states=hid_states_batch[0]) # match distribution dimension
+                self.actor_critic.act(obs_batch, masks=masks_batch, hidden_states=hid_states_batch[0]) # match distribution dimension, Normally no hist_encoding=True
 
                 actions_log_prob_batch = self.actor_critic.get_actions_log_prob(actions_batch)
                 value_batch = self.actor_critic.evaluate(critic_obs_batch, masks=masks_batch, hidden_states=hid_states_batch[1])
@@ -207,7 +207,7 @@ class PPO:
                 priv_latent_batch = self.actor_critic.actor.infer_priv_latent(obs_batch)
                 with torch.inference_mode():
                     hist_latent_batch = self.actor_critic.actor.infer_hist_latent(obs_batch)
-                priv_reg_loss = (priv_latent_batch - hist_latent_batch.detach()).norm(p=2, dim=1).mean()
+                priv_reg_loss = (priv_latent_batch - hist_latent_batch.detach()).norm(p=2, dim=1).mean()    # Normally hist_latent_batch.detach()
                 priv_reg_stage = min(max((self.counter - self.priv_reg_coef_schedual[2]), 0) / self.priv_reg_coef_schedual[3], 1)
                 priv_reg_coef = priv_reg_stage * (self.priv_reg_coef_schedual[1] - self.priv_reg_coef_schedual[0]) + self.priv_reg_coef_schedual[0]
 
@@ -275,13 +275,80 @@ class PPO:
         mean_value_loss /= num_updates
         mean_surrogate_loss /= num_updates
         mean_estimator_loss /= num_updates
-        mean_priv_reg_loss /= num_updates
+        mean_priv_reg_loss /= num_updates   # 0 when not using priv_latent
         mean_discriminator_loss /= num_updates
         mean_discriminator_acc /= num_updates
         self.storage.clear()
         self.update_counter()
-        return mean_value_loss, mean_surrogate_loss, mean_estimator_loss, mean_discriminator_loss, mean_discriminator_acc, mean_priv_reg_loss, priv_reg_coef
+        return mean_value_loss, mean_surrogate_loss, mean_estimator_loss, mean_discriminator_loss, mean_discriminator_acc, mean_priv_reg_loss, priv_reg_coef # 0 when not using priv_reg_coef
 
+    def update_delta_yaw_estimates(self, yaw_student_batch, yaw_teacher_batch):
+        yaw_loss = (yaw_teacher_batch.detach() - yaw_student_batch).norm(p=2, dim=1).mean()
+
+        self.depth_encoder_optimizer.zero_grad()
+        yaw_loss.backward()
+        nn.utils.clip_grad_norm_(self.depth_encoder.parameters(), self.max_grad_norm)
+        self.depth_encoder_optimizer.step()
+        return yaw_loss.item()
+
+    def compute_delta_yaw_estimates(self, depth_image, proprioception, chunk_size):  # , depth_image) can't process a batch of more than 32 images given the GRU architecture. Do inference on the rest
+        batch_size = depth_image.shape[0]
+        delta_yaw = []
+        
+        assert batch_size >= chunk_size
+        for k in range(0, batch_size, chunk_size):
+            if k == 0:
+                depth_image_chunk = depth_image[k:k+chunk_size]
+                proprioception_chunk = proprioception[k:k+chunk_size]
+                
+                yaw_estimate_chunk = self.depth_encoder(depth_image_chunk, proprioception_chunk, int(k / chunk_size))
+                delta_yaw_grad = yaw_estimate_chunk
+            
+            else:
+                with torch.no_grad():
+                    depth_image_chunk = depth_image[k:k+chunk_size]
+                    proprioception_chunk = proprioception[k:k+chunk_size]
+                
+                    yaw_estimate_chunk = self.depth_encoder(depth_image_chunk, proprioception_chunk, int(k / chunk_size))
+            delta_yaw.append(yaw_estimate_chunk.detach().clone())
+
+        delta_yaw = torch.cat(delta_yaw, dim=0)
+        return delta_yaw_grad, delta_yaw
+
+    def x_compute_delta_yaw_estimates(self, scandots, proprioception, chunk_size=16):  # , depth_image) can't process a batch of more than 32 images given the GRU architecture. Do inference on the rest
+        batch_size = proprioception.shape[0]
+        delta_yaw = []
+        
+        assert batch_size >= chunk_size
+        for k in range(0, batch_size, chunk_size):
+            if k == 0:
+                #depth_image_chunk = depth_image[k:k+chunk_size]
+                proprioception_chunk = proprioception[k:k+chunk_size]
+                scandots_chunk = scandots[k:k+chunk_size]
+                scandots_latent_chunk = self.actor_critic.actor.infer_scandots_latent(scandots_chunk).detach()
+                 # COMPUTE SCANDOTS LATENT FROM PROPRIOCEPTION CHUNK HERE WITH
+                 # SELF.ACTOR_CRITIC.ACTOR.INFER_SCANDOTS_LATENT(PROPRIOCEPTION_CHUNK).DETACH()
+                 # THEN GIVE IT TO THE DEPTH_ENCODER. IT WILL TREAT IT DIRECTLY AND IT'LL BE FINE
+
+                
+                yaw_estimate_chunk = self.depth_encoder(scandots_latent_chunk, proprioception_chunk)
+                delta_yaw_grad = yaw_estimate_chunk.clone()
+            
+            else:
+                with torch.no_grad():
+                    #depth_image_chunk = depth_image[k:k+chunk_size]
+                    proprioception_chunk = proprioception[k:k+chunk_size]
+                    scandots_chunk = scandots[k:k+chunk_size]
+                    scandots_latent_chunk = self.actor_critic.actor.infer_scandots_latent(scandots_chunk).detach()
+
+                    # SAME HERE! THEN TEST
+                
+                    yaw_estimate_chunk = self.depth_encoder(scandots_latent_chunk, proprioception_chunk)
+            delta_yaw.append(yaw_estimate_chunk.detach().clone())
+
+        delta_yaw = torch.cat(delta_yaw, dim=0)
+        return delta_yaw_grad, delta_yaw
+    
     def update_dagger(self):
         mean_hist_latent_loss = 0
         if self.actor_critic.is_recurrent:

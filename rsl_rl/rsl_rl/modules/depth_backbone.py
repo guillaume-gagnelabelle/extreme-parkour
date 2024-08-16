@@ -4,8 +4,9 @@ import sys
 import torchvision
 
 class RecurrentDepthBackbone(nn.Module):
-    def __init__(self, base_backbone, env_cfg) -> None:
+    def __init__(self, base_backbone, env_cfg) -> None: # (self, base_backbone, env_cfg)
         super().__init__()
+        
         activation = nn.ELU()
         last_activation = nn.Tanh()
         self.base_backbone = base_backbone
@@ -13,32 +14,48 @@ class RecurrentDepthBackbone(nn.Module):
             self.combination_mlp = nn.Sequential(
                                     nn.Linear(32 + 53, 128),
                                     activation,
-                                    nn.Linear(128, 32)
+                                    nn.Linear(128, 32),  # default: (128, 32)
+                                    #activation,
+                                    #nn.Linear(32, 2),
+                                    #last_activation
                                 )
         else:
             self.combination_mlp = nn.Sequential(
                                         nn.Linear(32 + env_cfg.env.n_proprio, 128),
                                         activation,
-                                        nn.Linear(128, 32)
+                                        nn.Linear(128, 32),  # default: (128, 32)
+                                        #activation,
+                                        #nn.Linear(32, 2),
+                                        #last_activation
                                     )
-        self.rnn = nn.GRU(input_size=32, hidden_size=512, batch_first=True)
+        self.rnn = nn.GRU(input_size=32, hidden_size=128, batch_first=True) # default: (input_size=32, hidden_size=512, batch_first=True)
         self.output_mlp = nn.Sequential(
-                                nn.Linear(512, 32+2),
+                                nn.Linear(128, 2),   # default (512, 32+2) but I don't need the scandots estimates (32) anymore
                                 last_activation
                             )
-        self.hidden_states = None
+        
+        self.hidden_states = []
+        self.batch_size = env_cfg.depth.camera_num_envs
+        self.chunk_size = env_cfg.depth.chunk_size
+        self.num_batches = int(self.batch_size / self.chunk_size)
+        assert self.chunk_size * self.num_batches == self.batch_size
+        for i in range(self.num_batches):
+            self.hidden_states.append(None)
 
-    def forward(self, depth_image, proprioception):
+
+    def forward(self, depth_image, proprioception, chunk):
         depth_image = self.base_backbone(depth_image)
         depth_latent = self.combination_mlp(torch.cat((depth_image, proprioception), dim=-1))
-        # depth_latent = self.base_backbone(depth_image)
-        depth_latent, self.hidden_states = self.rnn(depth_latent[:, None, :], self.hidden_states)
+        # depth_latent = self.base_backbone(depth_image)   # THIS WAS ALREADY COMMENTED OUT
+        depth_latent, self.hidden_states[chunk] = self.rnn(depth_latent[:, None, :], self.hidden_states[chunk])
         depth_latent = self.output_mlp(depth_latent.squeeze(1))
         
         return depth_latent
 
     def detach_hidden_states(self):
-        self.hidden_states = self.hidden_states.detach().clone()
+        #return
+        for i in range(self.num_batches):
+            self.hidden_states[i] = self.hidden_states[i].detach().clone()
 
 class StackDepthEncoder(nn.Module):
     def __init__(self, base_backbone, env_cfg) -> None:
@@ -75,18 +92,18 @@ class DepthOnlyFCBackbone58x87(nn.Module):
         activation = nn.ELU()
         self.image_compression = nn.Sequential(
             # [1, 58, 87]
-            nn.Conv2d(in_channels=self.num_frames, out_channels=32, kernel_size=5),
+            nn.Conv2d(in_channels=self.num_frames, out_channels=16, kernel_size=5),
             # [32, 54, 83]
             nn.MaxPool2d(kernel_size=2, stride=2),
             # [32, 27, 41]
             activation,
-            nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3),
+            nn.Conv2d(in_channels=16, out_channels=32, kernel_size=3),
             activation,
             nn.Flatten(),
             # [32, 25, 39]
-            nn.Linear(64 * 25 * 39, 128),
-            activation,
-            nn.Linear(128, scandots_output_dim)
+            nn.Linear(32 * 25 * 39, scandots_output_dim),
+            #activation,
+            #nn.Linear(128, scandots_output_dim)
         )
 
         if output_activation == "tanh":

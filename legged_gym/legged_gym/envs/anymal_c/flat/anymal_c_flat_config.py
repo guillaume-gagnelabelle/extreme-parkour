@@ -46,7 +46,7 @@ class AnymalCFlatCfg( AnymalCRoughCfg ):
         class scales ( AnymalCRoughCfg.rewards.scales ):
             orientation = -5.0
             torques = -0.000025
-            feet_air_time = 2.
+            # feet_air_time = 2.
             # feet_contact_forces = -0.01
     
     class commands( AnymalCRoughCfg.commands ):

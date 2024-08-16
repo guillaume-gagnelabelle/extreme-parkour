@@ -61,6 +61,9 @@ def play(args):
     faulthandler.enable()
     exptid = args.exptid
     log_pth = "../../logs/{}/".format(args.proj_name) + args.exptid
+    print("%"*200)
+    print(args.proj_name)
+    print("%"*200)
 
     env_cfg, train_cfg = task_registry.get_cfgs(name=args.task)
     # override some parameters for testing
@@ -71,7 +74,7 @@ def play(args):
     env_cfg.commands.resampling_time = 60
     env_cfg.terrain.num_rows = 5
     env_cfg.terrain.num_cols = 5
-    env_cfg.terrain.height = [0.02, 0.02]
+    env_cfg.terrain.height = [0.02, 0.02]   # NEW: Terrain itself. height of the texture of the ground
     env_cfg.terrain.terrain_dict = {"smooth slope": 0., 
                                     "rough slope up": 0.0,
                                     "rough slope down": 0.0,
@@ -86,12 +89,14 @@ def play(args):
                                     "platform": 0.,
                                     "large stairs up": 0.,
                                     "large stairs down": 0.,
-                                    "parkour": 0.2,
-                                    "parkour_hurdle": 0.2,
-                                    "parkour_flat": 0.,
-                                    "parkour_step": 0.2,
-                                    "parkour_gap": 0.2, 
-                                    "demo": 0.2}
+                                    "parkour": 0.0,
+                                    "parkour_hurdle": 0.,
+                                    "parkour_flat": 0.0,
+                                    "parkour_step_up": 0.,
+                                    "parkour_gap": 0., 
+                                    "demo": 0.0,
+                                    "parkour_step_down": 0.,
+                                    "parkour_single_box": 0.0}
     
     env_cfg.terrain.terrain_proportions = list(env_cfg.terrain.terrain_dict.values())
     env_cfg.terrain.curriculum = False
@@ -132,14 +137,14 @@ def play(args):
 
     actions = torch.zeros(env.num_envs, 12, device=env.device, requires_grad=False)
     infos = {}
-    infos["depth"] = env.depth_buffer.clone().to(ppo_runner.device)[:, -1] if ppo_runner.if_depth else None
+    infos["depth_image"] = env.depth_buffer.clone().to(ppo_runner.device)[:, -1] if ppo_runner.if_depth else None
 
     for i in range(10*int(env.max_episode_length)):
         if args.use_jit:
             if env.cfg.depth.use_camera:
-                if infos["depth"] is not None:
+                if infos["depth_image"] is not None:
                     depth_latent = torch.ones((env_cfg.env.num_envs, 32), device=env.device)
-                    actions, depth_latent = policy_jit(obs.detach(), True, infos["depth"], depth_latent)
+                    actions, depth_latent = policy_jit(obs.detach(), True, infos["depth_image"], depth_latent)
                 else:
                     depth_buffer = torch.ones((env_cfg.env.num_envs, 58, 87), device=env.device)
                     actions, depth_latent = policy_jit(obs.detach(), False, depth_buffer, depth_latent)
@@ -148,10 +153,10 @@ def play(args):
                 actions = policy(obs_jit)
         else:
             if env.cfg.depth.use_camera:
-                if infos["depth"] is not None:
+                if infos["depth_image"] is not None:
                     obs_student = obs[:, :env.cfg.env.n_proprio].clone()
                     obs_student[:, 6:8] = 0
-                    depth_latent_and_yaw = depth_encoder(infos["depth"], obs_student)
+                    depth_latent_and_yaw = depth_encoder(infos["depth_image"], obs_student)
                     depth_latent = depth_latent_and_yaw[:, :-2]
                     yaw = depth_latent_and_yaw[:, -2:]
                 obs[:, 6:8] = 1.5*yaw
@@ -170,9 +175,9 @@ def play(args):
                         step_graphics=True,
                         render_all_camera_sensors=True,
                         wait_for_page_load=True)
-        print("time:", env.episode_length_buf[env.lookat_id].item() / 50, 
-              "cmd vx", env.commands[env.lookat_id, 0].item(),
-              "actual vx", env.base_lin_vel[env.lookat_id, 0].item(), )
+        #print("time:", env.episode_length_buf[env.lookat_id].item() / 50, 
+        #      "cmd vx", env.commands[env.lookat_id, 0].item(),
+        #      "actual vx", env.base_lin_vel[env.lookat_id, 0].item(), )
         
         id = env.lookat_id
         

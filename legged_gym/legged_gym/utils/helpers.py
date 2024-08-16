@@ -132,11 +132,13 @@ def update_cfg_from_args(env_cfg, cfg_train, args):
             env_cfg.terrain.max_error = env_cfg.terrain.max_error_camera
             env_cfg.terrain.horizontal_scale = env_cfg.terrain.horizontal_scale_camera
             env_cfg.terrain.simplify_grid = True
-            env_cfg.terrain.terrain_dict["parkour_hurdle"] = 0.2
-            env_cfg.terrain.terrain_dict["parkour_flat"] = 0.05
-            env_cfg.terrain.terrain_dict["parkour_gap"] = 0.2
-            env_cfg.terrain.terrain_dict["parkour_step"] = 0.2
-            env_cfg.terrain.terrain_dict["demo"] = 0.15
+            env_cfg.terrain.terrain_dict["parkour"] = 1.0
+            env_cfg.terrain.terrain_dict["parkour_hurdle"] = 1.0
+            env_cfg.terrain.terrain_dict["parkour_flat"] = 1.0
+            env_cfg.terrain.terrain_dict["parkour_step_up"] = 1.0
+            env_cfg.terrain.terrain_dict["parkour_gap"] = 1.0
+            env_cfg.terrain.terrain_dict["parkour_step_down"] = 1.0
+            env_cfg.terrain.terrain_dict["demo"] = 0.0
             env_cfg.terrain.terrain_proportions = list(env_cfg.terrain.terrain_dict.values())
         if env_cfg.depth.use_camera:
             env_cfg.terrain.y_range = [-0.1, 0.1]
@@ -154,9 +156,10 @@ def update_cfg_from_args(env_cfg, cfg_train, args):
             env_cfg.terrain.num_cols = args.cols
         if args.delay:
             env_cfg.domain_rand.action_delay = args.delay
-        if not args.delay and not args.resume and not args.use_camera and args.headless: # if train from scratch
+        if not args.delay and args.headless: #   and not args.use_camera and not args.resume # if train from scratch
             env_cfg.domain_rand.action_delay = True
             env_cfg.domain_rand.action_curr_step = env_cfg.domain_rand.action_curr_step_scratch
+            print("YO"*80)
     if cfg_train is not None:
         if args.seed is not None:
             cfg_train.seed = args.seed
@@ -181,7 +184,7 @@ def update_cfg_from_args(env_cfg, cfg_train, args):
 
 def get_args():
     custom_parameters = [
-        {"name": "--task", "type": str, "default": "a1", "help": "Resume training or start testing from a checkpoint. Overrides config file if provided."},
+        {"name": "--task", "type": str, "default": "anymal_d", "help": "Resume training or start testing from a checkpoint. Overrides config file if provided."},
         {"name": "--resume", "action": "store_true", "default": False,  "help": "Resume training from a checkpoint"},
         {"name": "--experiment_name", "type": str,  "help": "Name of the experiment to run or load. Overrides config file if provided."},
         {"name": "--run_name", "type": str,  "help": "Name of the run. Overrides config file if provided."},
